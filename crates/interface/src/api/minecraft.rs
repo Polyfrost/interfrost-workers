@@ -427,7 +427,7 @@ pub enum ArgumentType {
 	/// The argument is passed to the JVM
 	Jvm,
 	/// Passed to JVM as well. Includes default arguments to the GC.
-    DefaultUserJvm,
+	DefaultUserJvm,
 }
 
 #[cfg_attr(feature = "specta", derive(specta::Type))]

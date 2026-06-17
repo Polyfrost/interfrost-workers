@@ -32,10 +32,88 @@ where
 	D: Deserializer<'de>,
 {
 	let s = String::deserialize(deserializer)?;
-	#[allow(deprecated)]
-	serde_json::from_str::<DateTime<Utc>>(&format!("\"{s}\""))
-		.or_else(|_| Utc.datetime_from_str(&s, "%Y-%m-%dT%H:%M:%S%.9f"))
-		.map_err(serde::de::Error::custom)
+	parse_date(&s).map_err(serde::de::Error::custom)
+}
+
+fn parse_date(s: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+	DateTime::parse_from_rfc3339(s)
+		.or_else(|_| {
+			normalize_short_timezone_offset(s).map_or_else(
+				|| DateTime::parse_from_rfc3339(s),
+				|s| DateTime::parse_from_rfc3339(&s),
+			)
+		})
+		.map(|date| date.with_timezone(&Utc))
+		.or_else(|_| {
+			chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.9f")
+				.map(|date| date.and_utc())
+		})
+}
+
+fn normalize_short_timezone_offset(s: &str) -> Option<String> {
+	let offset_start = s.rfind(['+', '-'])?;
+	let offset = s.as_bytes().get(offset_start..)?;
+
+	if offset.len() == 5
+		&& offset[1].is_ascii_digit()
+		&& offset[2] == b':'
+		&& offset[3].is_ascii_digit()
+		&& offset[4].is_ascii_digit()
+	{
+		let mut normalized = String::with_capacity(s.len() + 1);
+		normalized.push_str(&s[..=offset_start]);
+		normalized.push('0');
+		normalized.push_str(&s[offset_start + 1..]);
+
+		Some(normalized)
+	} else {
+		None
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn parse_date_accepts_forge_short_utc_offset() {
+		let parsed = parse_date("2026-05-27T14:13:59+0:00").unwrap();
+
+		assert_eq!(parsed.to_rfc3339(), "2026-05-27T14:13:59+00:00");
+	}
+
+	#[test]
+	fn partial_version_info_accepts_forge_short_utc_offset() {
+		let parsed: PartialVersionInfo = serde_json::from_str(
+			r#"{
+				"id": "1.21.11-forge-61.1.7",
+				"inheritsFrom": "1.21.11",
+				"releaseTime": "2026-05-27T14:13:59+0:00",
+				"time": "2026-05-27T14:13:59+0:00",
+				"libraries": [],
+				"type": "release"
+			}"#,
+		)
+		.unwrap();
+
+		assert_eq!(parsed.time.to_rfc3339(), "2026-05-27T14:13:59+00:00");
+		assert_eq!(
+			parsed.release_time.to_rfc3339(),
+			"2026-05-27T14:13:59+00:00"
+		);
+	}
+
+	#[test]
+	fn parse_date_keeps_existing_formats() {
+		assert_eq!(
+			parse_date("2026-05-27T14:13:59Z").unwrap().to_rfc3339(),
+			"2026-05-27T14:13:59+00:00"
+		);
+		assert_eq!(
+			parse_date("2026-05-27T14:13:59.123").unwrap().to_rfc3339(),
+			"2026-05-27T14:13:59.123+00:00"
+		);
+	}
 }
 
 #[cfg_attr(feature = "specta", derive(specta::Type))]
