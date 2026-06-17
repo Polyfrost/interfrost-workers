@@ -20,6 +20,8 @@ pub enum ErrorKind {
 	Tracing(#[from] tracing::subscriber::SetGlobalDefaultError),
 	#[error("zip error: {0}")]
 	Zip(#[from] async_zip::error::ZipError),
+	#[error("failed to parse an integer: {0}")]
+	ParseInt(#[from] std::num::ParseIntError),
 	#[error("failed to upload file to S3: {file}")]
 	S3 {
 		inner: Box<s3::error::S3Error>,

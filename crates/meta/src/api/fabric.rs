@@ -83,8 +83,8 @@ async fn fetch(
 		crate::utils::fetch_json::<FabricVersions>(&format!("{meta_url}/versions"), &semaphore)
 			.await?;
 
-	// we can check our fabric manifest and compare it to fabric's to avoid unnecessary processing
-	let (fetch_fabric_versions, fetch_intermediary_versions) =
+	// check our manifest to find new loader versions, intermediary artifacts, and game versions.
+	let (fetch_fabric_versions, fetch_intermediary_versions, has_new_game_versions) =
 		if let Some(existing_manifest) = existing_manifest {
 			let (mut fetch_versions, mut fetch_intermediary_versions) = (Vec::new(), Vec::new());
 
@@ -113,7 +113,18 @@ async fn fetch(
 				}
 			}
 
-			(fetch_versions, fetch_intermediary_versions)
+			let has_new_game_versions = fabric_manifest.game.iter().any(|version| {
+				!existing_manifest
+					.game_versions
+					.iter()
+					.any(|x| x.id == version.version)
+			});
+
+			(
+				fetch_versions,
+				fetch_intermediary_versions,
+				has_new_game_versions,
+			)
 		} else {
 			(
 				fabric_manifest
@@ -122,6 +133,7 @@ async fn fetch(
 					.filter(|x| !skip_versions.contains(&&*x.version))
 					.collect(),
 				fabric_manifest.intermediary.iter().collect(),
+				true,
 			)
 		};
 
@@ -222,7 +234,10 @@ async fn fetch(
 			});
 	}
 
-	if !fetch_fabric_versions.is_empty() || !fetch_intermediary_versions.is_empty() {
+	if !fetch_fabric_versions.is_empty()
+		|| !fetch_intermediary_versions.is_empty()
+		|| has_new_game_versions
+	{
 		let fabric_manifest_path = format!("{mod_loader}/v{format_version}/manifest.json",);
 
 		let loader_versions = interfrost::api::modded::Version {
