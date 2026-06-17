@@ -97,7 +97,7 @@ async fn main() -> utils::Result<()> {
 					.collect::<Vec<_>>();
 
 				tracing::info!("clearing cloudflare chunks");
-				for chunk in cache_clears.chunks(500) {
+				for chunk in cache_clears.chunks(100) {
 					utils::REQWEST_CLIENT
 						.post(format!(
 							"https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache"
