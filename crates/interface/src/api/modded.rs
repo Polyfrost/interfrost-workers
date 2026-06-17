@@ -66,6 +66,18 @@ fn normalize_short_timezone_offset(s: &str) -> Option<String> {
 		normalized.push_str(&s[offset_start + 1..]);
 
 		Some(normalized)
+	} else if offset.len() == 5
+		&& offset[1].is_ascii_digit()
+		&& offset[2].is_ascii_digit()
+		&& offset[3].is_ascii_digit()
+		&& offset[4].is_ascii_digit()
+	{
+		let mut normalized = String::with_capacity(s.len() + 1);
+		normalized.push_str(&s[..offset_start + 3]);
+		normalized.push(':');
+		normalized.push_str(&s[offset_start + 3..]);
+
+		Some(normalized)
 	} else {
 		None
 	}
@@ -80,6 +92,13 @@ mod tests {
 		let parsed = parse_date("2026-05-27T14:13:59+0:00").unwrap();
 
 		assert_eq!(parsed.to_rfc3339(), "2026-05-27T14:13:59+00:00");
+	}
+
+	#[test]
+	fn parse_date_accepts_fabric_compact_utc_offset() {
+		let parsed = parse_date("2026-06-17T03:48:02+0000").unwrap();
+
+		assert_eq!(parsed.to_rfc3339(), "2026-06-17T03:48:02+00:00");
 	}
 
 	#[test]
@@ -100,6 +119,27 @@ mod tests {
 		assert_eq!(
 			parsed.release_time.to_rfc3339(),
 			"2026-05-27T14:13:59+00:00"
+		);
+	}
+
+	#[test]
+	fn partial_version_info_accepts_fabric_compact_utc_offset() {
+		let parsed: PartialVersionInfo = serde_json::from_str(
+			r#"{
+				"id": "fabric-loader-0.19.3-1.21",
+				"inheritsFrom": "1.21",
+				"releaseTime": "2026-06-17T03:48:02+0000",
+				"time": "2026-06-17T03:48:02+0000",
+				"libraries": [],
+				"type": "release"
+			}"#,
+		)
+		.unwrap();
+
+		assert_eq!(parsed.time.to_rfc3339(), "2026-06-17T03:48:02+00:00");
+		assert_eq!(
+			parsed.release_time.to_rfc3339(),
+			"2026-06-17T03:48:02+00:00"
 		);
 	}
 
