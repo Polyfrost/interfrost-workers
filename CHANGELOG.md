@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add Ornithe, kill Legacy Fabric
 
 ## `1.3.1`
 

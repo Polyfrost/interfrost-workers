@@ -20,25 +20,6 @@ pub async fn fetch_fabric(
 	.await
 }
 
-#[tracing::instrument(skip(semaphore, upload_files, mirror_artifacts))]
-pub async fn fetch_legacy_fabric(
-	semaphore: Arc<Semaphore>,
-	upload_files: &crate::UploadFiles,
-	mirror_artifacts: &crate::MirrorArtifacts,
-) -> crate::utils::Result<()> {
-	fetch(
-		interfrost::api::modded::CURRENT_LEGACY_FABRIC_FORMAT_VERSION,
-		"legacy-fabric",
-		"https://meta.legacyfabric.net/v2",
-		"https://repo.legacyfabric.net/repository/legacyfabric/",
-		&[],
-		semaphore,
-		upload_files,
-		mirror_artifacts,
-	)
-	.await
-}
-
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip(semaphore, upload_files, mirror_artifacts))]
 pub async fn fetch_quilt(

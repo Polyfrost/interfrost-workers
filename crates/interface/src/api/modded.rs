@@ -9,8 +9,8 @@ pub const CURRENT_FORGE_FORMAT_VERSION: usize = 0;
 pub const CURRENT_QUILT_FORMAT_VERSION: usize = 0;
 /// The latest version of the format the neoforge model structs deserialize to
 pub const CURRENT_NEOFORGE_FORMAT_VERSION: usize = 0;
-/// The latest version of the format the legacy fabric model structs deserialize to
-pub const CURRENT_LEGACY_FABRIC_FORMAT_VERSION: usize = 0;
+/// The latest version of the format the ornithe model structs deserialize to
+pub const CURRENT_ORNITHE_FORMAT_VERSION: usize = 0;
 /// The latest version of the format the cleanroom model structs deserialize to
 pub const CURRENT_CLEANROOM_FORMAT_VERSION: usize = 0;
 
