@@ -39,12 +39,41 @@ async fn main() -> utils::Result<()> {
 	let upload_files: UploadFiles = DashMap::new();
 	let mirror_artifacts: MirrorArtifacts = DashMap::new();
 
-	api::minecraft::fetch(semaphore.clone(), &upload_files, &mirror_artifacts).await?;
-	api::fabric::fetch_fabric(semaphore.clone(), &upload_files, &mirror_artifacts).await?;
-	api::fabric::fetch_quilt(semaphore.clone(), &upload_files, &mirror_artifacts).await?;
-	api::ornithe::fetch(semaphore.clone(), &upload_files, &mirror_artifacts).await?;
-	api::forge::fetch_neo(semaphore.clone(), &upload_files, &mirror_artifacts).await?;
-	api::forge::fetch_forge(semaphore.clone(), &upload_files, &mirror_artifacts).await?;
+	let mut failed = Vec::new();
+
+	macro_rules! fetch {
+		($source:literal, $call:expr) => {
+			if let Err(err) = $call.await {
+				tracing::error!("failed to fetch {} metadata: {err:?}", $source);
+				failed.push($source);
+			}
+		};
+	}
+
+	fetch!(
+		"minecraft",
+		api::minecraft::fetch(semaphore.clone(), &upload_files, &mirror_artifacts)
+	);
+	fetch!(
+		"fabric",
+		api::fabric::fetch_fabric(semaphore.clone(), &upload_files, &mirror_artifacts)
+	);
+	fetch!(
+		"quilt",
+		api::fabric::fetch_quilt(semaphore.clone(), &upload_files, &mirror_artifacts)
+	);
+	fetch!(
+		"ornithe",
+		api::ornithe::fetch(semaphore.clone(), &upload_files, &mirror_artifacts)
+	);
+	fetch!(
+		"neoforge",
+		api::forge::fetch_neo(semaphore.clone(), &upload_files, &mirror_artifacts)
+	);
+	fetch!(
+		"forge",
+		api::forge::fetch_forge(semaphore.clone(), &upload_files, &mirror_artifacts)
+	);
 
 	tracing::info!("uploading metadata files to bucket");
 	futures::future::try_join_all(upload_files.iter().map(|x| {
@@ -120,6 +149,14 @@ async fn main() -> utils::Result<()> {
 				}
 			}
 		}
+	}
+
+	if !failed.is_empty() {
+		return Err(utils::ErrorKind::InvalidInput(format!(
+			"published what was fetched, but these sources failed: {}",
+			failed.join(", ")
+		))
+		.as_error());
 	}
 
 	Ok(())
