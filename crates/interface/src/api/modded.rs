@@ -1,4 +1,6 @@
-use crate::api::minecraft::{Argument, ArgumentType, Library, VersionInfo, VersionType};
+use crate::api::minecraft::{
+	Argument, ArgumentType, JavaVersion, Library, VersionInfo, VersionType,
+};
 use crate::utils::prelude::*;
 
 /// The latest version of the format the fabric model structs deserialize to
@@ -10,7 +12,7 @@ pub const CURRENT_QUILT_FORMAT_VERSION: usize = 0;
 /// The latest version of the format the neoforge model structs deserialize to
 pub const CURRENT_NEOFORGE_FORMAT_VERSION: usize = 0;
 /// The latest version of the format the ornithe model structs deserialize to
-pub const CURRENT_ORNITHE_FORMAT_VERSION: usize = 0;
+pub const CURRENT_ORNITHE_FORMAT_VERSION: usize = 1;
 /// The latest version of the format the cleanroom model structs deserialize to
 pub const CURRENT_CLEANROOM_FORMAT_VERSION: usize = 0;
 
@@ -180,6 +182,8 @@ pub struct PartialVersionInfo {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	/// Arguments passed to the game or JVM
 	pub arguments: Option<HashMap<ArgumentType, Vec<Argument>>>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub java_version: Option<JavaVersion>,
 	/// Libraries that the version depends on
 	pub libraries: Vec<Library>,
 	#[serde(rename = "type")]
@@ -267,7 +271,7 @@ pub fn merge_partial_version(partial: PartialVersionInfo, merge: VersionInfo) ->
 		assets: merge.assets,
 		downloads: merge.downloads,
 		id: partial.id.replace(DUMMY_REPLACE_STRING, &merge_id),
-		java_version: merge.java_version,
+		java_version: partial.java_version.or(merge.java_version),
 		libraries: libraries
 			.into_iter()
 			.chain(partial.libraries)

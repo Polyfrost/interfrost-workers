@@ -365,6 +365,7 @@ async fn fetch(
 					time: install_profile.version_info.time,
 					main_class: install_profile.version_info.main_class,
 					minecraft_arguments: install_profile.version_info.minecraft_arguments.clone(),
+					java_version: None,
 					arguments: install_profile.version_info.minecraft_arguments.map(|x| {
 						std::iter::once(&(
 							interfrost::api::minecraft::ArgumentType::Game,

@@ -1,5 +1,5 @@
 use crate::utils::prelude::*;
-use interfrost::api::minecraft::{Argument, ArgumentType, Library};
+use interfrost::api::minecraft::{Argument, ArgumentType, JavaVersion, Library};
 use interfrost::api::modded::{LoaderVersion, Manifest, PartialVersionInfo, Version};
 
 const META_URL: &str = "https://meta.ornithemc.net/v3/versions";
@@ -9,6 +9,7 @@ const GENERATION: u8 = 2;
 const TEMPLATE_GAME_VERSION: &str = "1.8.9";
 const INTERMEDIARY_GROUP: &str = "net.ornithemc:calamus-intermediary";
 const BATCH_SIZE: usize = 100;
+const JAVA_OVERRIDES: &[(&str, u32, &str)] = &[("1.8.9", 25, "java-runtime-epsilon")];
 
 fn escape(game_version: &str) -> String {
 	game_version.replace(' ', "%20")
@@ -304,6 +305,7 @@ fn build_profile(
 		main_class: base.main_class.clone(),
 		minecraft_arguments: base.minecraft_arguments.clone(),
 		arguments: Some(retarget_arguments(base.arguments.clone(), &game.version)),
+		java_version: java_version(&game.version).or_else(|| base.java_version.clone()),
 		libraries: base
 			.libraries
 			.iter()
@@ -325,6 +327,16 @@ fn build_profile(
 		data: None,
 		processors: None,
 	}
+}
+
+fn java_version(game_version: &str) -> Option<JavaVersion> {
+	JAVA_OVERRIDES
+		.iter()
+		.find(|(version, ..)| *version == game_version)
+		.map(|(_, major_version, component)| JavaVersion {
+			component: (*component).to_string(),
+			major_version: *major_version,
+		})
 }
 
 fn retarget_arguments(
@@ -469,6 +481,18 @@ mod tests {
 				"com.google.code.gson:gson:2.10"
 			]
 		);
+	}
+
+	#[test]
+	fn only_overridden_game_versions_state_a_java_version() {
+		base_url();
+		let base = serde_json::from_str::<PartialVersionInfo>(BASE_PROFILE).unwrap();
+
+		let profile = build_profile(&base, &game("1.8.9"), &[]);
+		assert_eq!(profile.java_version.map(|java| java.major_version), Some(25));
+
+		let profile = build_profile(&base, &game("b1.7.3"), &[]);
+		assert!(profile.java_version.is_none());
 	}
 
 	#[test]

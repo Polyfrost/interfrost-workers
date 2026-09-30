@@ -1276,7 +1276,7 @@ dependencies = [
 
 [[package]]
 name = "interfrost"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1459,7 +1459,7 @@ dependencies = [
 
 [[package]]
 name = "meta_patcher"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "clap",
  "color-eyre",
@@ -1471,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "meta_workers"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "async_zip",
  "bytes 1.10.1",

@@ -253,7 +253,7 @@ pub struct LibraryExtract {
 }
 
 #[cfg_attr(feature = "specta", derive(specta::Type))]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 /// Information about the java version the game needs
 pub struct JavaVersion {
