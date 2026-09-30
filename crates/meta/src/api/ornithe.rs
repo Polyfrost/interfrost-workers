@@ -1,5 +1,7 @@
 use crate::utils::prelude::*;
-use interfrost::api::minecraft::{Argument, ArgumentType, JavaVersion, Library};
+use interfrost::api::minecraft::{
+	Argument, ArgumentType, ArgumentValue, JavaVersion, Library, Os, OsRule, Rule, RuleAction,
+};
 use interfrost::api::modded::{LoaderVersion, Manifest, PartialVersionInfo, Version};
 
 const META_URL: &str = "https://meta.ornithemc.net/v3/versions";
@@ -358,6 +360,19 @@ fn retarget_arguments(
 		jvm.push(flag);
 	}
 
+	jvm.push(Argument::Ruled {
+		rules: vec![Rule {
+			action: RuleAction::Allow,
+			os: Some(OsRule {
+				name: Some(Os::Osx),
+				version: None,
+				arch: None,
+			}),
+			features: None,
+		}],
+		value: ArgumentValue::Single("-XstartOnFirstThread".to_string()),
+	});
+
 	arguments
 }
 
@@ -408,9 +423,9 @@ mod tests {
 	fn jvm_arguments(profile: &PartialVersionInfo) -> Vec<String> {
 		profile.arguments.as_ref().unwrap()[&ArgumentType::Jvm]
 			.iter()
-			.map(|argument| match argument {
-				Argument::Normal(x) => x.clone(),
-				Argument::Ruled { .. } => panic!("unexpected ruled argument"),
+			.filter_map(|argument| match argument {
+				Argument::Normal(x) => Some(x.clone()),
+				Argument::Ruled { .. } => None,
 			})
 			.collect()
 	}
@@ -484,12 +499,45 @@ mod tests {
 	}
 
 	#[test]
+	fn macos_starts_on_the_first_thread() {
+		base_url();
+		let base = serde_json::from_str::<PartialVersionInfo>(BASE_PROFILE).unwrap();
+		let profile = build_profile(&base, &game("1.8.9"), &[]);
+
+		let first_thread = profile.arguments.as_ref().unwrap()[&ArgumentType::Jvm]
+			.iter()
+			.filter_map(|argument| match argument {
+				Argument::Ruled { rules, value } => Some((rules, value)),
+				Argument::Normal(_) => None,
+			})
+			.collect::<Vec<_>>();
+
+		assert_eq!(first_thread.len(), 1);
+		let (rules, value) = first_thread[0];
+		assert!(matches!(value, ArgumentValue::Single(x) if x == "-XstartOnFirstThread"));
+		assert!(matches!(
+			rules.as_slice(),
+			[Rule {
+				action: RuleAction::Allow,
+				os: Some(OsRule {
+					name: Some(Os::Osx),
+					..
+				}),
+				..
+			}]
+		));
+	}
+
+	#[test]
 	fn only_overridden_game_versions_state_a_java_version() {
 		base_url();
 		let base = serde_json::from_str::<PartialVersionInfo>(BASE_PROFILE).unwrap();
 
 		let profile = build_profile(&base, &game("1.8.9"), &[]);
-		assert_eq!(profile.java_version.map(|java| java.major_version), Some(25));
+		assert_eq!(
+			profile.java_version.map(|java| java.major_version),
+			Some(25)
+		);
 
 		let profile = build_profile(&base, &game("b1.7.3"), &[]);
 		assert!(profile.java_version.is_none());
