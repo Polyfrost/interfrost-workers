@@ -177,7 +177,8 @@ pub async fn download_file(
 					.into());
 				}
 			}
-			Err(_) if attempt <= RETRIES => continue,
+			Err(err)
+				if attempt <= RETRIES && err.status() != Some(reqwest::StatusCode::NOT_FOUND) => {}
 			Err(err) => {
 				return Err(crate::utils::ErrorKind::Fetch {
 					inner: err,

@@ -177,13 +177,7 @@ pub async fn fetch_neo(
             game_version, // not all neoforge(neo) versions are for 1.20.1
         })
     }))
-        .collect::<crate::utils::Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|x| {
-        	const BLACKLIST: &[&str] = &["1.20.1-47.1.7", "47.1.82"]; // nonexistent (404)
-        	!BLACKLIST.contains(&&*x.raw)
-    	})
-		.collect();
+        .collect::<crate::utils::Result<Vec<_>>>()?;
 
 	fetch(
 		interfrost::api::modded::CURRENT_NEOFORGE_FORMAT_VERSION,
@@ -215,31 +209,18 @@ async fn fetch(
 	.await
 	.ok();
 
-	let fetch_versions = if let Some(existing_manifest) = existing_manifest {
-		let mut fetch_versions = Vec::new();
-
-		for version in &forge_versions {
-			if !existing_manifest.game_versions.iter().any(|x| {
+	let in_manifest = |version: &ForgeVersion| {
+		existing_manifest.as_ref().is_some_and(|manifest| {
+			manifest.game_versions.iter().any(|x| {
 				x.id == version.game_version
 					&& x.loaders.iter().any(|x| x.id == version.loader_version)
-			}) {
-				fetch_versions.push(version);
-			}
-		}
-
-		fetch_versions
-	} else {
-		forge_versions.iter().collect()
+			})
+		})
 	};
 
-	if !fetch_versions.is_empty() {
-		let forge_installers = futures::future::try_join_all(
-			fetch_versions
-				.iter()
-				.map(|x| crate::utils::download_file(&x.installer_url, None, &semaphore)),
-		)
-		.await?;
+	let fetch_versions = versions_to_fetch(&forge_versions, in_manifest);
 
+	if !fetch_versions.is_empty() {
 		#[tracing::instrument(skip(raw, upload_files, mirror_artifacts))]
 		async fn read_forge_installer(
 			raw: Bytes,
@@ -663,53 +644,58 @@ async fn fetch(
 			}
 		}
 
-		let forge_version_infos =
-			futures::future::try_join_all(forge_installers.into_iter().enumerate().map(
-				|(index, raw)| {
-					let loader = fetch_versions[index];
+		let semaphore = &semaphore;
+		let results = futures::future::join_all(fetch_versions.iter().map(|&loader| async move {
+			let raw = crate::utils::download_file(&loader.installer_url, None, semaphore).await?;
 
-					read_forge_installer(
-						raw,
-						loader,
-						maven_url,
-						mod_loader,
-						upload_files,
-						mirror_artifacts,
-					)
-				},
-			))
-			.await?;
+			read_forge_installer(
+				raw,
+				loader,
+				maven_url,
+				mod_loader,
+				upload_files,
+				mirror_artifacts,
+			)
+			.await
+		}))
+		.await;
 
-		let serialized_version_manifests = forge_version_infos
-			.iter()
-			.map(|x| serde_json::to_vec(x).map(Bytes::from))
-			.collect::<Result<Vec<_>, serde_json::Error>>()?;
+		let mut failed = Vec::new();
+		let mut fetched = std::collections::HashSet::new();
+		for (loader, result) in fetch_versions.iter().zip(results) {
+			let version_info = match result {
+				Ok(version_info) => version_info,
+				Err(err) if err.is_not_found() => {
+					tracing::warn!("skipping {}: installer not found", loader.raw);
+					continue;
+				}
+				Err(err) => {
+					tracing::error!("skipping {}: {err:?}", loader.raw);
+					failed.push(&*loader.raw);
+					continue;
+				}
+			};
 
-		serialized_version_manifests
-			.into_iter()
-			.enumerate()
-			.for_each(|(index, bytes)| {
-				let loader = fetch_versions[index];
-
-				let version_path = format!(
+			upload_files.insert(
+				format!(
 					"{mod_loader}/v{format_version}/versions/{}.json",
 					loader.loader_version
-				);
+				),
+				crate::utils::UploadFile {
+					file: Bytes::from(serde_json::to_vec(&version_info)?),
+					content_type: Some("application/json".to_string()),
+				},
+			);
 
-				upload_files.insert(
-					version_path,
-					crate::utils::UploadFile {
-						file: bytes,
-						content_type: Some("application/json".to_string()),
-					},
-				);
-			});
+			fetched.insert(&*loader.raw);
+		}
 
 		let forge_manifest_path = format!("{mod_loader}/v{format_version}/manifest.json",);
 
 		let manifest = interfrost::api::modded::Manifest {
 			game_versions: forge_versions
-				.into_iter()
+				.iter()
+				.filter(|x| fetched.contains(&*x.raw) || in_manifest(x))
 				.sorted_by(|a, b| b.game_version.cmp(&a.game_version))
 				.rev()
 				.chunk_by(|x| x.game_version.clone())
@@ -723,7 +709,7 @@ async fn fetch(
 								"{mod_loader}/v{format_version}/versions/{}.json",
 								x.loader_version
 							)),
-							id: x.loader_version,
+							id: x.loader_version.clone(),
 							stable: false,
 						})
 						.collect(),
@@ -738,9 +724,46 @@ async fn fetch(
 				content_type: Some("application/json".to_string()),
 			},
 		);
+
+		if !failed.is_empty() {
+			return Err(crate::utils::ErrorKind::InvalidInput(format!(
+				"failed to fetch {mod_loader} versions: {}",
+				failed.join(", ")
+			))
+			.into());
+		}
 	}
 
 	Ok(())
+}
+
+const BLACKLIST_AFTER: usize = 5;
+
+fn versions_to_fetch(
+	versions: &[ForgeVersion],
+	in_manifest: impl Fn(&ForgeVersion) -> bool,
+) -> Vec<&ForgeVersion> {
+	versions
+		.iter()
+		.enumerate()
+		.filter(|(_, version)| !in_manifest(version))
+		.filter(|&(index, version)| {
+			let newer = versions[index + 1..]
+				.iter()
+				.filter(|x| x.game_version == version.game_version && in_manifest(x))
+				.count();
+
+			if newer >= BLACKLIST_AFTER {
+				tracing::debug!(
+					"{} is blacklisted, {newer} newer versions exist",
+					version.raw
+				);
+			}
+
+			newer < BLACKLIST_AFTER
+		})
+		.map(|(_, version)| version)
+		.collect()
 }
 
 #[derive(Debug)]
