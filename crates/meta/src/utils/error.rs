@@ -13,7 +13,11 @@ pub enum ErrorKind {
 	#[error("failed to deserialize XML: {0}")]
 	SerdeXML(#[from] serde_xml_rs::Error),
 	#[error("failed to fetch {item}")]
-	Fetch { inner: reqwest::Error, item: String },
+	Fetch {
+		#[source]
+		inner: reqwest::Error,
+		item: String,
+	},
 	#[error("failed to acquire semaphore: {0}")]
 	Acquire(#[from] tokio::sync::AcquireError),
 	#[error("tracing error: {0}")]
@@ -52,6 +56,16 @@ impl<E: Into<ErrorKind>> From<E> for Error {
 		Self {
 			source: error.in_current_span(),
 		}
+	}
+}
+
+impl Error {
+	#[must_use]
+	pub fn is_not_found(&self) -> bool {
+		let source: &dyn std::error::Error = &self.source;
+		std::iter::successors(Some(source), |e| e.source())
+			.filter_map(|e| e.downcast_ref::<reqwest::Error>())
+			.any(|e| e.status() == Some(reqwest::StatusCode::NOT_FOUND))
 	}
 }
 
