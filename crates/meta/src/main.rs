@@ -127,25 +127,50 @@ async fn main() -> utils::Result<()> {
 
 				tracing::info!("clearing cloudflare chunks");
 				for chunk in cache_clears.chunks(100) {
-					utils::REQWEST_CLIENT
-						.post(format!(
-							"https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache"
-						))
-						.bearer_auth(&token)
-						.json(&serde_json::json!({
-							"files": chunk
-						}))
-						.send()
-						.await
-						.map_err(|err| utils::ErrorKind::Fetch {
-							inner: err,
-							item: "cloudflare clear cache".to_string(),
-						})?
-						.error_for_status()
-						.map_err(|err| utils::ErrorKind::Fetch {
-							inner: err,
-							item: "cloudflare clear cache".to_string(),
-						})?;
+					for attempt in 1..=5u64 {
+						let res = utils::REQWEST_CLIENT
+							.post(format!(
+								"https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache"
+							))
+							.bearer_auth(&token)
+							.json(&serde_json::json!({
+								"files": chunk
+							}))
+							.send()
+							.await
+							.and_then(|res| {
+								if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+									Ok(Some(res))
+								} else {
+									res.error_for_status().map(|_| None)
+								}
+							});
+
+						match res {
+							Ok(Some(res)) if attempt < 5 => {
+								let wait = res
+									.headers()
+									.get(reqwest::header::RETRY_AFTER)
+									.and_then(|x| x.to_str().ok())
+									.and_then(|x| x.parse::<u64>().ok())
+									.unwrap_or(30 * attempt)
+									.min(300);
+								tracing::warn!(
+									"cloudflare purge rate limited, retrying in {wait}s (attempt {attempt})"
+								);
+								tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+							}
+							Ok(Some(_)) => {
+								tracing::warn!("cloudflare purge still rate limited, skipping chunk");
+								break;
+							}
+							Ok(None) => break,
+							Err(err) => {
+								tracing::warn!("cloudflare purge failed, skipping chunk: {err}");
+								break;
+							}
+						}
+					}
 				}
 			}
 		}
