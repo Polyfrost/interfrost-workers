@@ -5,6 +5,7 @@
 - Add Ornithe, kill Legacy Fabric
 - Add `java_version` to `PartialVersionInfo`; `merge_partial_version` prefers it over the game's. Ornithe 1.8.9 profiles now state Java 25.
 - Ornithe profiles pass `-XstartOnFirstThread` on macOS.
+- Ornithe profiles use the latest Legacy Fabric LWJGL 2 build instead of the one Ornithe pins; a newer release regenerates every profile.
 - Bump `CURRENT_ORNITHE_FORMAT_VERSION` to `1` so every Ornithe profile is regenerated with the new field.
 
 ## `1.3.1`

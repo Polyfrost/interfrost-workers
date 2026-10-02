@@ -7,6 +7,8 @@ use interfrost::api::modded::{LoaderVersion, Manifest, PartialVersionInfo, Versi
 const META_URL: &str = "https://meta.ornithemc.net/v3/versions";
 const MC_VERSIONS_URL: &str = "https://ornithemc.net/mc-versions";
 const MAVEN_URL: &str = "https://maven.ornithemc.net/releases/";
+const LWJGL_METADATA_URL: &str =
+	"https://maven.legacyfabric.net/org/lwjgl/lwjgl/lwjgl/maven-metadata.xml";
 const GENERATION: u8 = 2;
 const TEMPLATE_GAME_VERSION: &str = "1.8.9";
 const INTERMEDIARY_GROUP: &str = "net.ornithemc:calamus-intermediary";
@@ -44,20 +46,32 @@ pub async fn fetch(
 	)
 	.await?;
 
-	let (new_loaders, new_games) =
-		changed_versions(existing_manifest.as_ref(), &loaders, &intermediaries);
-
-	if new_loaders.is_empty() && new_games.is_empty() {
-		tracing::info!("ornithe metadata is already up to date!");
-		return Ok(());
-	}
-
 	let mut game_libraries = crate::utils::fetch_json::<HashMap<String, Vec<Library>>>(
 		&crate::utils::format_url(&libraries_path),
 		&semaphore,
 	)
 	.await
 	.unwrap_or_default();
+	let lwjgl = crate::utils::fetch_xml::<XmlMetadata>(LWJGL_METADATA_URL, &semaphore)
+		.await?
+		.versioning
+		.release;
+
+	let (new_loaders, mut new_games) =
+		changed_versions(existing_manifest.as_ref(), &loaders, &intermediaries);
+
+	if game_libraries
+		.values()
+		.flatten()
+		.any(|library| legacy_fabric_lwjgl(library).is_some_and(|x| x != lwjgl))
+	{
+		new_games = intermediaries.iter().collect();
+	}
+
+	if new_loaders.is_empty() && new_games.is_empty() {
+		tracing::info!("ornithe metadata is already up to date!");
+		return Ok(());
+	}
 
 	let required_games = if new_loaders.is_empty() {
 		new_games.clone()
@@ -81,6 +95,8 @@ pub async fn fetch(
 			game_libraries.insert(game.version.clone(), libraries);
 		}
 	}
+
+	upgrade_lwjgl(&mut game_libraries, &lwjgl, &semaphore).await?;
 
 	let required_loaders = if new_games.is_empty() {
 		new_loaders.clone()
@@ -268,6 +284,60 @@ fn is_upgraded_lwjgl(library: &Library) -> bool {
 		})
 }
 
+fn legacy_fabric_lwjgl(library: &Library) -> Option<&str> {
+	library
+		.name
+		.strip_prefix("org.lwjgl.lwjgl:")?
+		.rsplit(':')
+		.next()
+		.filter(|version| version.contains("+legacyfabric."))
+}
+
+async fn upgrade_lwjgl(
+	game_libraries: &mut HashMap<String, Vec<Library>>,
+	latest: &str,
+	semaphore: &Arc<Semaphore>,
+) -> crate::utils::Result<()> {
+	let mut files = HashMap::<String, (String, u32)>::new();
+
+	for library in game_libraries.values_mut().flatten() {
+		let Some(old) = legacy_fabric_lwjgl(library)
+			.filter(|version| *version != latest)
+			.map(str::to_string)
+		else {
+			continue;
+		};
+
+		library.name = library.name.replace(&old, latest);
+		let Some(downloads) = &mut library.downloads else {
+			continue;
+		};
+
+		for download in downloads.artifact.iter_mut().chain(
+			downloads
+				.classifiers
+				.iter_mut()
+				.flat_map(HashMap::values_mut),
+		) {
+			download.url = download.url.replace(&old, latest);
+			download.path = download.path.as_ref().map(|x| x.replace(&old, latest));
+
+			if !files.contains_key(&download.url) {
+				let bytes = crate::utils::download_file(&download.url, None, semaphore).await?;
+				let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+				files.insert(
+					download.url.clone(),
+					(crate::utils::sha1_async(bytes).await?, size),
+				);
+			}
+
+			(download.sha1, download.size) = files[&download.url].clone();
+		}
+	}
+
+	Ok(())
+}
+
 fn mirror_library(
 	library: &mut Library,
 	fallback_maven: &str,
@@ -382,6 +452,16 @@ struct OrnitheVersion {
 	pub maven: String,
 	#[serde(default)]
 	pub stable: bool,
+}
+
+#[derive(Deserialize, Debug)]
+struct XmlMetadata {
+	versioning: XmlVersioning,
+}
+
+#[derive(Deserialize, Debug)]
+struct XmlVersioning {
+	release: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -628,6 +708,63 @@ mod tests {
 				.await
 				.unwrap_or_else(|err| panic!("{}: {err}", game.version));
 		}
+	}
+
+	#[tokio::test]
+	#[ignore = "hits legacy fabric's maven"]
+	async fn legacy_fabric_lwjgl_is_upgraded_to_the_latest_release() {
+		let semaphore = Arc::new(Semaphore::new(10));
+		let latest = crate::utils::fetch_xml::<XmlMetadata>(LWJGL_METADATA_URL, &semaphore)
+			.await
+			.unwrap()
+			.versioning
+			.release;
+		let mut game_libraries = HashMap::from([(
+			"1.8.9".to_string(),
+			serde_json::from_str::<Vec<Library>>(
+				r#"[
+					{
+						"name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4+legacyfabric.15",
+						"downloads": { "classifiers": { "natives-osx": { "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.15/lwjgl-platform-2.9.4+legacyfabric.15-natives-osx.jar", "sha1": "a", "size": 1, "url": "https://maven.legacyfabric.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.15/lwjgl-platform-2.9.4+legacyfabric.15-natives-osx.jar" } } }
+					},
+					{
+						"name": "com.paulscode:librarylwjglopenal:20100824",
+						"downloads": { "artifact": { "sha1": "b", "size": 2, "url": "https://libraries.minecraft.net/com/paulscode/librarylwjglopenal/20100824/librarylwjglopenal-20100824.jar" } }
+					}
+				]"#,
+			)
+			.unwrap(),
+		)]);
+
+		upgrade_lwjgl(&mut game_libraries, &latest, &semaphore)
+			.await
+			.unwrap();
+
+		let [platform, openal] = game_libraries["1.8.9"].as_slice() else {
+			panic!("libraries were added or removed");
+		};
+		assert_eq!(legacy_fabric_lwjgl(platform), Some(latest.as_str()));
+		let natives = &platform
+			.downloads
+			.as_ref()
+			.unwrap()
+			.classifiers
+			.as_ref()
+			.unwrap()["natives-osx"];
+		assert!(natives.url.contains(&latest) && natives.path.as_ref().unwrap().contains(&latest));
+		assert_eq!(natives.sha1.len(), 40);
+		assert!(natives.size > 1);
+		assert_eq!(
+			openal
+				.downloads
+				.as_ref()
+				.unwrap()
+				.artifact
+				.as_ref()
+				.unwrap()
+				.sha1,
+			"b"
+		);
 	}
 
 	#[test]
