@@ -13,6 +13,7 @@ const GENERATION: u8 = 2;
 const TEMPLATE_GAME_VERSION: &str = "1.8.9";
 const INTERMEDIARY_GROUP: &str = "net.ornithemc:calamus-intermediary";
 const BATCH_SIZE: usize = 100;
+const FIRST_THREAD: &str = "-XstartOnFirstThread";
 const JAVA_OVERRIDES: &[(&str, u32, &str)] = &[("1.8.9", 25, "java-runtime-epsilon")];
 
 fn escape(game_version: &str) -> String {
@@ -60,10 +61,24 @@ pub async fn fetch(
 	let (new_loaders, mut new_games) =
 		changed_versions(existing_manifest.as_ref(), &loaders, &intermediaries);
 
-	if game_libraries
-		.values()
-		.flatten()
-		.any(|library| legacy_fabric_lwjgl(library).is_some_and(|x| x != lwjgl))
+	let stale_arguments = match loaders.first() {
+		Some(loader) => crate::utils::fetch_json::<PartialVersionInfo>(
+			&crate::utils::format_url(&format!(
+				"ornithe/v{format_version}/versions/{TEMPLATE_GAME_VERSION}/{}.json",
+				loader.version
+			)),
+			&semaphore,
+		)
+		.await
+		.is_ok_and(|profile| !starts_on_first_thread(&profile, &Os::OsxArm64)),
+		None => false,
+	};
+
+	if stale_arguments
+		|| game_libraries
+			.values()
+			.flatten()
+			.any(|library| legacy_fabric_lwjgl(library).is_some_and(|x| x != lwjgl))
 	{
 		new_games = intermediaries.iter().collect();
 	}
@@ -430,20 +445,40 @@ fn retarget_arguments(
 		jvm.push(flag);
 	}
 
-	jvm.push(Argument::Ruled {
-		rules: vec![Rule {
-			action: RuleAction::Allow,
-			os: Some(OsRule {
-				name: Some(Os::Osx),
-				version: None,
-				arch: None,
-			}),
-			features: None,
-		}],
-		value: ArgumentValue::Single("-XstartOnFirstThread".to_string()),
-	});
+	for os in [Os::Osx, Os::OsxArm64] {
+		jvm.push(Argument::Ruled {
+			rules: vec![Rule {
+				action: RuleAction::Allow,
+				os: Some(OsRule {
+					name: Some(os),
+					version: None,
+					arch: None,
+				}),
+				features: None,
+			}],
+			value: ArgumentValue::Single(FIRST_THREAD.to_string()),
+		});
+	}
 
 	arguments
+}
+
+fn starts_on_first_thread(profile: &PartialVersionInfo, os: &Os) -> bool {
+	profile
+		.arguments
+		.iter()
+		.filter_map(|arguments| arguments.get(&ArgumentType::Jvm))
+		.flatten()
+		.any(|argument| {
+			matches!(
+				argument,
+				Argument::Ruled { rules, value: ArgumentValue::Single(flag) }
+					if flag == FIRST_THREAD
+						&& rules.iter().any(|rule| {
+							rule.os.as_ref().and_then(|x| x.name.as_ref()) == Some(os)
+						})
+			)
+		})
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -584,28 +619,13 @@ mod tests {
 		let base = serde_json::from_str::<PartialVersionInfo>(BASE_PROFILE).unwrap();
 		let profile = build_profile(&base, &game("1.8.9"), &[]);
 
-		let first_thread = profile.arguments.as_ref().unwrap()[&ArgumentType::Jvm]
-			.iter()
-			.filter_map(|argument| match argument {
-				Argument::Ruled { rules, value } => Some((rules, value)),
-				Argument::Normal(_) => None,
-			})
-			.collect::<Vec<_>>();
+		assert!(starts_on_first_thread(&profile, &Os::Osx));
+		assert!(starts_on_first_thread(&profile, &Os::OsxArm64));
+		assert!(!starts_on_first_thread(&profile, &Os::Windows));
+		assert!(!starts_on_first_thread(&profile, &Os::Linux));
 
-		assert_eq!(first_thread.len(), 1);
-		let (rules, value) = first_thread[0];
-		assert!(matches!(value, ArgumentValue::Single(x) if x == "-XstartOnFirstThread"));
-		assert!(matches!(
-			rules.as_slice(),
-			[Rule {
-				action: RuleAction::Allow,
-				os: Some(OsRule {
-					name: Some(Os::Osx),
-					..
-				}),
-				..
-			}]
-		));
+		let json = serde_json::to_string(&profile).unwrap();
+		assert!(json.contains(r#""name":"osx-arm64""#));
 	}
 
 	#[test]
