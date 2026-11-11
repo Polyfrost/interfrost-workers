@@ -7,6 +7,7 @@ use interfrost::api::modded::{LoaderVersion, Manifest, PartialVersionInfo, Versi
 const META_URL: &str = "https://meta.ornithemc.net/v3/versions";
 const MC_VERSIONS_URL: &str = "https://ornithemc.net/mc-versions";
 const MAVEN_URL: &str = "https://maven.ornithemc.net/releases/";
+const LEGACY_FABRIC_MAVEN: &str = "https://maven.legacyfabric.net/";
 const LWJGL_METADATA_URL: &str =
 	"https://maven.legacyfabric.net/org/lwjgl/lwjgl/lwjgl/maven-metadata.xml";
 const GENERATION: u8 = 2;
@@ -53,10 +54,15 @@ pub async fn fetch(
 	)
 	.await
 	.unwrap_or_default();
-	let lwjgl = crate::utils::fetch_xml::<XmlMetadata>(LWJGL_METADATA_URL, &semaphore)
-		.await?
-		.versioning
-		.release;
+	// Legacy Fabric being down only delays LWJGL upgrades; the rest of Ornithe still updates
+	let lwjgl = match crate::utils::fetch_xml::<XmlMetadata>(LWJGL_METADATA_URL, &semaphore).await {
+		Ok(metadata) => Some(metadata.versioning.release),
+		Err(err) => {
+			tracing::warn!("failed to fetch legacy fabric lwjgl metadata: {err:?}");
+			None
+		}
+	};
+	let libraries_changed = template_libraries_changed(&game_libraries, &semaphore).await?;
 
 	let (new_loaders, mut new_games) =
 		changed_versions(existing_manifest.as_ref(), &loaders, &intermediaries);
@@ -75,11 +81,13 @@ pub async fn fetch(
 	};
 
 	if stale_arguments
-		|| game_libraries
-			.values()
-			.flatten()
-			.any(|library| legacy_fabric_lwjgl(library).is_some_and(|x| x != lwjgl))
-	{
+		|| libraries_changed
+		|| game_libraries.values().flatten().any(|library| {
+			lwjgl
+				.as_deref()
+				.is_some_and(|latest| legacy_fabric_lwjgl(library).is_some_and(|x| x != latest))
+				|| unmirrored_downloads(library)
+		}) {
 		new_games = intermediaries.iter().collect();
 	}
 
@@ -95,7 +103,7 @@ pub async fn fetch(
 	};
 	let missing_games = required_games
 		.iter()
-		.filter(|game| !game_libraries.contains_key(&game.version))
+		.filter(|game| libraries_changed || !game_libraries.contains_key(&game.version))
 		.collect::<Vec<_>>();
 
 	for batch in missing_games.chunks(BATCH_SIZE) {
@@ -111,7 +119,13 @@ pub async fn fetch(
 		}
 	}
 
-	upgrade_lwjgl(&mut game_libraries, &lwjgl, &semaphore).await?;
+	if let Some(lwjgl) = &lwjgl {
+		upgrade_lwjgl(&mut game_libraries, lwjgl, &semaphore).await?;
+	}
+
+	for library in game_libraries.values_mut().flatten() {
+		mirror_downloads(library, mirror_artifacts)?;
+	}
 
 	let required_loaders = if new_games.is_empty() {
 		new_loaders.clone()
@@ -334,8 +348,12 @@ async fn upgrade_lwjgl(
 				.iter_mut()
 				.flat_map(HashMap::values_mut),
 		) {
-			download.url = download.url.replace(&old, latest);
 			download.path = download.path.as_ref().map(|x| x.replace(&old, latest));
+			// The cached url may already point at our mirror, which has no copy of the new version yet
+			download.url = match &download.path {
+				Some(path) => format!("{LEGACY_FABRIC_MAVEN}{path}"),
+				None => download.url.replace(&old, latest),
+			};
 
 			if !files.contains_key(&download.url) {
 				let bytes = crate::utils::download_file(&download.url, None, semaphore).await?;
@@ -348,6 +366,89 @@ async fn upgrade_lwjgl(
 
 			(download.sha1, download.size) = files[&download.url].clone();
 		}
+	}
+
+	Ok(())
+}
+
+/// Ornithe edits a version's library list without bumping anything we track, so cached
+/// lists go stale. Probe one version per run and refetch every list when it differs.
+// ponytail: only the template version is probed; a change that skips 1.8.9 waits for a format bump
+async fn template_libraries_changed(
+	game_libraries: &HashMap<String, Vec<Library>>,
+	semaphore: &Arc<Semaphore>,
+) -> crate::utils::Result<bool> {
+	let Some(cached) = game_libraries.get(TEMPLATE_GAME_VERSION) else {
+		return Ok(false);
+	};
+	let fresh = crate::utils::fetch_json::<Vec<Library>>(
+		&format!("{META_URL}/gen{GENERATION}/libraries/{TEMPLATE_GAME_VERSION}"),
+		semaphore,
+	)
+	.await?;
+
+	Ok(library_names(&fresh) != library_names(cached))
+}
+
+/// LWJGL is excluded: the cached list carries the upgraded copies from the version manifest.
+fn library_names(libraries: &[Library]) -> std::collections::HashSet<&str> {
+	libraries
+		.iter()
+		.map(|library| library.name.as_str())
+		.filter(|name| !name.starts_with("org.lwjgl"))
+		.collect()
+}
+
+fn needs_mirror(url: &str) -> bool {
+	!url.starts_with("https://libraries.minecraft.net/")
+		&& !url.starts_with(&crate::utils::format_url("maven/"))
+}
+
+fn unmirrored_downloads(library: &Library) -> bool {
+	library.downloads.as_ref().is_some_and(|downloads| {
+		downloads
+			.artifact
+			.iter()
+			.chain(downloads.classifiers.iter().flat_map(HashMap::values))
+			.any(|download| needs_mirror(&download.url))
+	})
+}
+
+/// Points full-url downloads (Legacy Fabric LWJGL) at our maven and queues the upload.
+fn mirror_downloads(
+	library: &mut Library,
+	mirror_artifacts: &crate::MirrorArtifacts,
+) -> crate::utils::Result<()> {
+	let Some(downloads) = &mut library.downloads else {
+		return Ok(());
+	};
+
+	let artifact = downloads
+		.artifact
+		.iter_mut()
+		.map(|x| (library.name.clone(), x));
+	let classifiers = downloads
+		.classifiers
+		.iter_mut()
+		.flat_map(|x| x.iter_mut())
+		.map(|(classifier, x)| (format!("{}:{classifier}", library.name), x));
+
+	for (coordinate, download) in artifact.chain(classifiers) {
+		if !needs_mirror(&download.url) {
+			continue;
+		}
+
+		crate::utils::insert_mirrored_artifact(
+			&coordinate,
+			Some(download.sha1.clone()),
+			vec![download.url.clone()],
+			true,
+			mirror_artifacts,
+		)?;
+		download.url = crate::utils::format_url(&format!(
+			"maven/{}",
+			interfrost::utils::get_path_from_artifact(&coordinate)?
+		));
 	}
 
 	Ok(())
@@ -745,7 +846,7 @@ mod tests {
 				r#"[
 					{
 						"name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4+legacyfabric.15",
-						"downloads": { "classifiers": { "natives-osx": { "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.15/lwjgl-platform-2.9.4+legacyfabric.15-natives-osx.jar", "sha1": "a", "size": 1, "url": "https://maven.legacyfabric.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.15/lwjgl-platform-2.9.4+legacyfabric.15-natives-osx.jar" } } }
+						"downloads": { "classifiers": { "natives-osx": { "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.15/lwjgl-platform-2.9.4+legacyfabric.15-natives-osx.jar", "sha1": "a", "size": 1, "url": "https://meta.example/maven/org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.15/lwjgl-platform-2.9.4+legacyfabric.15-natives-osx.jar" } } }
 					},
 					{
 						"name": "com.paulscode:librarylwjglopenal:20100824",
@@ -785,6 +886,77 @@ mod tests {
 				.sha1,
 			"b"
 		);
+	}
+
+	#[test]
+	fn legacy_fabric_downloads_are_mirrored() {
+		base_url();
+		let mirror_artifacts = crate::MirrorArtifacts::new();
+		let mut library = serde_json::from_str::<Library>(
+			r#"{
+				"name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4+legacyfabric.18",
+				"downloads": {
+					"artifact": { "sha1": "a", "size": 1, "url": "https://maven.legacyfabric.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.18/lwjgl-platform-2.9.4+legacyfabric.18.jar" },
+					"classifiers": {
+						"natives-osx": { "sha1": "b", "size": 2, "url": "https://maven.legacyfabric.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.18/lwjgl-platform-2.9.4+legacyfabric.18-natives-osx.jar" },
+						"natives-linux": { "sha1": "c", "size": 3, "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.18/lwjgl-platform-2.9.4+legacyfabric.18-natives-linux.jar" }
+					}
+				}
+			}"#,
+		)
+		.unwrap();
+		assert!(unmirrored_downloads(&library));
+
+		mirror_downloads(&mut library, &mirror_artifacts).unwrap();
+
+		let downloads = library.downloads.as_ref().unwrap();
+		let classifiers = downloads.classifiers.as_ref().unwrap();
+		let natives = "org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.18/lwjgl-platform-2.9.4+legacyfabric.18-natives-osx.jar";
+		assert_eq!(
+			classifiers["natives-osx"].url,
+			format!("https://meta.example/maven/{natives}")
+		);
+		assert!(
+			classifiers["natives-linux"]
+				.url
+				.starts_with("https://libraries.minecraft.net/")
+		);
+		assert_eq!(
+			downloads.artifact.as_ref().unwrap().url,
+			"https://meta.example/maven/org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.18/lwjgl-platform-2.9.4+legacyfabric.18.jar"
+		);
+		let (sha1, mirrors) = mirror_artifacts
+			.get(natives)
+			.map(|x| {
+				let mirrors = x
+					.mirrors
+					.iter()
+					.map(|m| (m.path.clone(), m.entire_url))
+					.collect::<Vec<_>>();
+				(x.sha1.clone(), mirrors)
+			})
+			.unwrap();
+		assert_eq!(sha1.as_deref(), Some("b"));
+		assert_eq!(
+			mirrors,
+			[(format!("https://maven.legacyfabric.net/{natives}"), true)]
+		);
+		assert_eq!(mirror_artifacts.len(), 2);
+		assert!(!unmirrored_downloads(&library));
+	}
+
+	#[test]
+	fn library_lists_compare_without_lwjgl() {
+		let names = |json: &str| serde_json::from_str::<Vec<Library>>(json).unwrap();
+		let cached = names(
+			r#"[{ "name": "com.google.code.gson:gson:2.10" }, { "name": "org.lwjgl.lwjgl:lwjgl:2.9.4+legacyfabric.18" }]"#,
+		);
+		let same = names(r#"[{ "name": "com.google.code.gson:gson:2.10" }]"#);
+		let added = names(
+			r#"[{ "name": "com.google.code.gson:gson:2.10" }, { "name": "com.mojang:brigadier:1.3.11" }]"#,
+		);
+		assert_eq!(library_names(&same), library_names(&cached));
+		assert_ne!(library_names(&added), library_names(&cached));
 	}
 
 	#[test]
