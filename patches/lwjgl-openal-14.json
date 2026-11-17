@@ -1,0 +1,28 @@
+{
+	"_comment": "Add linux-arm64 support for LWJGL 3.4.3",
+	"match": [
+		"org.lwjgl:lwjgl-openal:3.4.3"
+	],
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "f2083556a7d8a02e4abeb2b933642250ef06c61d",
+					"size": 866036,
+					"url": "https://build.lwjgl.org/release/3.4.3/bin/lwjgl-openal/lwjgl-openal-natives-linux-arm64.jar"
+				}
+			},
+			"name": "org.lwjgl:lwjgl-openal-natives-linux-arm64:3.4.3-lwjgl.1",
+			"rules": [
+				{
+					"action": "allow",
+					"os": {
+						"name": "linux-arm64"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}

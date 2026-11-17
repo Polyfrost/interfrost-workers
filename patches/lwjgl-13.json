@@ -1,0 +1,29 @@
+{
+	"_comment": "Add linux-arm32 support for LWJGL 3.4.1",
+	"match": [
+		"org.lwjgl:lwjgl:3.4.1",
+		"org.lwjgl:lwjgl:3.4.1:unsafe"
+	],
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "1511ab1ffb1c8d8e00e2acb452663173ae09bca0",
+					"size": 93721,
+					"url": "https://build.lwjgl.org/release/3.4.1/bin/lwjgl/lwjgl-natives-linux-arm32.jar"
+				}
+			},
+			"name": "org.lwjgl:lwjgl-natives-linux-arm32:3.4.1-lwjgl.1",
+			"rules": [
+				{
+					"action": "allow",
+					"os": {
+						"name": "linux-arm32"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}

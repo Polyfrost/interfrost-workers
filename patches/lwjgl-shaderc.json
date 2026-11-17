@@ -1,0 +1,28 @@
+{
+	"_comment": "Add linux-arm64 support for LWJGL 3.4.1",
+	"match": [
+		"org.lwjgl:lwjgl-shaderc:3.4.1"
+	],
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "bc5c99b2eb7e2109c6db21cfced15a6851f8111b",
+					"size": 3397476,
+					"url": "https://build.lwjgl.org/release/3.4.1/bin/lwjgl-shaderc/lwjgl-shaderc-natives-linux-arm64.jar"
+				}
+			},
+			"name": "org.lwjgl:lwjgl-shaderc-natives-linux-arm64:3.4.1-lwjgl.1",
+			"rules": [
+				{
+					"action": "allow",
+					"os": {
+						"name": "linux-arm64"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}

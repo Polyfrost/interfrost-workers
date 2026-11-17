@@ -1,0 +1,28 @@
+{
+	"_comment": "Add linux-arm32 support for LWJGL 3.4.2",
+	"match": [
+		"org.lwjgl:lwjgl-spvc:3.4.2"
+	],
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "116499bd6ed8f2aae20b14d42226843910b248b3",
+					"size": 1066774,
+					"url": "https://build.lwjgl.org/release/3.4.2/bin/lwjgl-spvc/lwjgl-spvc-natives-linux-arm32.jar"
+				}
+			},
+			"name": "org.lwjgl:lwjgl-spvc-natives-linux-arm32:3.4.2-lwjgl.1",
+			"rules": [
+				{
+					"action": "allow",
+					"os": {
+						"name": "linux-arm32"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}

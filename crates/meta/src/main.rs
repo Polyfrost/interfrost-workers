@@ -37,6 +37,7 @@ async fn main() -> utils::Result<()> {
 	));
 
 	let upload_files: UploadFiles = DashMap::new();
+	let final_upload_files: UploadFiles = DashMap::new();
 	let mirror_artifacts: MirrorArtifacts = DashMap::new();
 
 	let mut failed = Vec::new();
@@ -52,7 +53,12 @@ async fn main() -> utils::Result<()> {
 
 	fetch!(
 		"minecraft",
-		api::minecraft::fetch(semaphore.clone(), &upload_files, &mirror_artifacts)
+		api::minecraft::fetch(
+			semaphore.clone(),
+			&upload_files,
+			&final_upload_files,
+			&mirror_artifacts,
+		)
 	);
 	fetch!(
 		"fabric",
@@ -76,15 +82,7 @@ async fn main() -> utils::Result<()> {
 	);
 
 	tracing::info!("uploading metadata files to bucket");
-	futures::future::try_join_all(upload_files.iter().map(|x| {
-		utils::upload_file_to_bucket(
-			x.key().clone(),
-			x.value().file.clone(),
-			x.value().content_type.clone(),
-			&semaphore,
-		)
-	}))
-	.await?;
+	upload_all(&upload_files, &semaphore).await?;
 
 	tracing::info!("uploading mirrored artifacts to bucket");
 	futures::future::try_join_all(mirror_artifacts.iter().map(|x| {
@@ -107,6 +105,8 @@ async fn main() -> utils::Result<()> {
 	}))
 	.await?;
 
+	upload_all(&final_upload_files, &semaphore).await?;
+
 	tracing::info!("clearing cloudflare cache on updated artifacts");
 	if dotenvy::var("CLOUDFLARE_INTEGRATION")
 		.ok()
@@ -117,6 +117,7 @@ async fn main() -> utils::Result<()> {
 			if let Ok(zone_id) = dotenvy::var("CLOUDFLARE_ZONE_ID") {
 				let cache_clears = upload_files
 					.into_iter()
+					.chain(final_upload_files)
 					.map(|x| utils::format_url(&x.0))
 					.chain(
 						mirror_artifacts
@@ -184,5 +185,18 @@ async fn main() -> utils::Result<()> {
 		.as_error());
 	}
 
+	Ok(())
+}
+
+async fn upload_all(files: &UploadFiles, semaphore: &Arc<Semaphore>) -> utils::Result<()> {
+	futures::future::try_join_all(files.iter().map(|x| {
+		utils::upload_file_to_bucket(
+			x.key().clone(),
+			x.value().file.clone(),
+			x.value().content_type.clone(),
+			semaphore,
+		)
+	}))
+	.await?;
 	Ok(())
 }

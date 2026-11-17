@@ -1,0 +1,28 @@
+{
+	"_comment": "Add linux-arm32 support for LWJGL 3.4.2",
+	"match": [
+		"org.lwjgl:lwjgl-shaderc:3.4.2"
+	],
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "7a510abf3a71ab4c38924ae941be3684fb864739",
+					"size": 3020373,
+					"url": "https://build.lwjgl.org/release/3.4.2/bin/lwjgl-shaderc/lwjgl-shaderc-natives-linux-arm32.jar"
+				}
+			},
+			"name": "org.lwjgl:lwjgl-shaderc-natives-linux-arm32:3.4.2-lwjgl.1",
+			"rules": [
+				{
+					"action": "allow",
+					"os": {
+						"name": "linux-arm32"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}

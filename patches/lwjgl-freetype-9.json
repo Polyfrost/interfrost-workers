@@ -1,0 +1,28 @@
+{
+	"_comment": "Add linux-arm64 support for LWJGL 3.4.2",
+	"match": [
+		"org.lwjgl:lwjgl-freetype:3.4.2"
+	],
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "b5fb3db06d1ecb15f54fabda6a4914ae933525ee",
+					"size": 1319451,
+					"url": "https://build.lwjgl.org/release/3.4.2/bin/lwjgl-freetype/lwjgl-freetype-natives-linux-arm64.jar"
+				}
+			},
+			"name": "org.lwjgl:lwjgl-freetype-natives-linux-arm64:3.4.2-lwjgl.1",
+			"rules": [
+				{
+					"action": "allow",
+					"os": {
+						"name": "linux-arm64"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}

@@ -1,0 +1,78 @@
+{
+	"_comment": "Use newer JNA on macOS to prevent crashes due to faulty assertion",
+	"match": [
+		"net.java.dev.jna:jna-platform:5.6.0",
+		"net.java.dev.jna:jna-platform:5.8.0",
+		"net.java.dev.jna:jna-platform:5.9.0",
+		"net.java.dev.jna:jna-platform:5.10.0",
+		"net.java.dev.jna:jna-platform:5.12.1"
+	],
+	"override": {
+		"rules": [
+			{
+				"action": "allow"
+			},
+			{
+				"action": "disallow",
+				"os": {
+					"name": "osx"
+				}
+			},
+			{
+				"action": "disallow",
+				"os": {
+					"name": "osx-arm64"
+				}
+			}
+		]
+	},
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "88e9a306715e9379f3122415ef4ae759a352640d",
+					"size": 1363209,
+					"url": "https://libraries.minecraft.net/net/java/dev/jna/jna-platform/5.13.0/jna-platform-5.13.0.jar"
+				}
+			},
+			"name": "net.java.dev.jna:jna-platform:5.13.0",
+			"rules": [
+				{
+					"action": "allow"
+				},
+				{
+					"action": "disallow",
+					"os": {
+						"name": "windows"
+					}
+				},
+				{
+					"action": "disallow",
+					"os": {
+						"name": "windows-arm64"
+					}
+				},
+				{
+					"action": "disallow",
+					"os": {
+						"name": "linux"
+					}
+				},
+				{
+					"action": "disallow",
+					"os": {
+						"name": "linux-arm64"
+					}
+				},
+				{
+					"action": "disallow",
+					"os": {
+						"name": "linux-arm32"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}

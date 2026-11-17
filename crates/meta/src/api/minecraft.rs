@@ -6,10 +6,13 @@ use meta_patcher::patch::LibraryPatch;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-#[tracing::instrument(skip(semaphore, upload_files, _mirror_artifacts))]
+const LIBRARY_PATCHES: &[u8] = include_bytes!("../../library.json");
+
+#[tracing::instrument(skip(semaphore, upload_files, final_upload_files, _mirror_artifacts))]
 pub async fn fetch(
 	semaphore: Arc<Semaphore>,
 	upload_files: &crate::UploadFiles,
+	final_upload_files: &crate::UploadFiles,
 	_mirror_artifacts: &crate::MirrorArtifacts,
 ) -> crate::utils::Result<()> {
 	tracing::info!("fetching minecraft metadata!");
@@ -23,6 +26,15 @@ pub async fn fetch(
 	.await
 	.ok();
 	let mojang_manifest = fetch_json::<VersionManifest>(VERSION_MANIFEST_URL, &semaphore).await?;
+
+	let patches_hash_path = format!(
+		"minecraft/v{}/library-patches-sha1.json",
+		interfrost::api::minecraft::CURRENT_FORMAT_VERSION
+	);
+	let patches_hash = sha1_async(bytes::Bytes::from_static(LIBRARY_PATCHES)).await?;
+	let patches_unchanged = fetch_json::<String>(&format_url(&patches_hash_path), &semaphore)
+		.await
+		.is_ok_and(|x| x == patches_hash);
 
 	// TODO: experimental snapshots: https://github.com/PrismLauncher/meta/blob/main/meta/common/mojang-minecraft-experiments.json
 	// TODO: old snapshots: https://github.com/PrismLauncher/meta/blob/main/meta/common/mojang-minecraft-old-snapshots.json
@@ -40,10 +52,11 @@ pub async fn fetch(
 			{
 				let existing_version = existing_manifest.versions.remove(index);
 
-				if existing_version
-					.original_sha1
-					.as_ref()
-					.is_some_and(|x| x == &version.sha1)
+				if patches_unchanged
+					&& existing_version
+						.original_sha1
+						.as_ref()
+						.is_some_and(|x| x == &version.sha1)
 				{
 					existing_versions.push(existing_version);
 				} else {
@@ -157,6 +170,13 @@ pub async fn fetch(
 				content_type: Some("application/json".to_string()),
 			},
 		);
+		final_upload_files.insert(
+			patches_hash_path,
+			crate::utils::UploadFile {
+				file: bytes::Bytes::from(serde_json::to_vec(&patches_hash)?),
+				content_type: Some("application/json".to_string()),
+			},
+		);
 	}
 
 	Ok(())
@@ -166,8 +186,7 @@ pub async fn fetch(
 ///
 /// note: this uses the [`include_bytes`] macro, be careful of the file size of `library.json`.
 fn fetch_library_patches() -> crate::utils::Result<Vec<LibraryPatch>> {
-	let patches = include_bytes!("../../library.json");
-	Ok(serde_json::from_slice(patches)?)
+	Ok(serde_json::from_slice(LIBRARY_PATCHES)?)
 }
 
 /// patches a [`Library`] based on a ruleset defined in an array of [`LibraryPatch`]es.
@@ -202,4 +221,14 @@ pub fn patch_library(patches: &Vec<LibraryPatch>, mut library: Library) -> Vec<L
 	val.push(library);
 
 	val
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn library_patches_parse() {
+		assert!(!fetch_library_patches().unwrap().is_empty());
+	}
 }

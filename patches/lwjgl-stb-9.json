@@ -1,0 +1,28 @@
+{
+	"_comment": "Add linux-arm32 support for LWJGL 3.3.6",
+	"match": [
+		"org.lwjgl:lwjgl-stb:3.3.6"
+	],
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "f47bac442afcb7fd014af7d90892024fe3c0d920",
+					"size": 191834,
+					"url": "https://build.lwjgl.org/release/3.3.6/bin/lwjgl-stb/lwjgl-stb-natives-linux-arm32.jar"
+				}
+			},
+			"name": "org.lwjgl:lwjgl-stb-natives-linux-arm32:3.3.6-lwjgl.1",
+			"rules": [
+				{
+					"action": "allow",
+					"os": {
+						"name": "linux-arm32"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}

@@ -1,0 +1,28 @@
+{
+	"_comment": "Add linux-arm64 support for LWJGL 3.3.6",
+	"match": [
+		"org.lwjgl:lwjgl-tinyfd:3.3.6"
+	],
+	"additionalLibraries": [
+		{
+			"downloads": {
+				"artifact": {
+					"sha1": "7806e57c3d9ea6b6a552c72f5e2597343c4d4138",
+					"size": 44504,
+					"url": "https://build.lwjgl.org/release/3.3.6/bin/lwjgl-tinyfd/lwjgl-tinyfd-natives-linux-arm64.jar"
+				}
+			},
+			"name": "org.lwjgl:lwjgl-tinyfd-natives-linux-arm64:3.3.6-lwjgl.1",
+			"rules": [
+				{
+					"action": "allow",
+					"os": {
+						"name": "linux-arm64"
+					}
+				}
+			],
+			"include_in_classpath": true,
+			"downloadable": true
+		}
+	]
+}
