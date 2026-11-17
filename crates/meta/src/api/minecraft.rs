@@ -1,12 +1,34 @@
 use crate::utils::{download_file, fetch_json, format_url, sha1_async};
 use interfrost::api::minecraft::{
-	Library, VERSION_MANIFEST_URL, VersionInfo, VersionManifest, merge_partial_library,
+	Argument, ArgumentType, Library, VERSION_MANIFEST_URL, VersionInfo, VersionManifest,
+	merge_partial_library,
 };
 use meta_patcher::patch::LibraryPatch;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 const LIBRARY_PATCHES: &[u8] = include_bytes!("../../library.json");
+
+/// Works around CVE-2026-114938, an out-of-bounds write in `HotSpot`'s AVX-512 `Base64` decoder
+pub const DISABLE_BASE64_INTRINSICS: &str = "-XX:-UseBASE64Intrinsics";
+const BASE64_INTRINSICS_MIN_JAVA: u32 = 17;
+
+pub fn disable_base64_intrinsics(
+	arguments: &mut HashMap<ArgumentType, Vec<Argument>>,
+	java_major: u32,
+) {
+	if java_major < BASE64_INTRINSICS_MIN_JAVA {
+		return;
+	}
+	let jvm = arguments.entry(ArgumentType::Jvm).or_default();
+	if !jvm
+		.iter()
+		.any(|x| matches!(x, Argument::Normal(x) if x == DISABLE_BASE64_INTRINSICS))
+	{
+		jvm.push(Argument::Normal(DISABLE_BASE64_INTRINSICS.to_string()));
+	}
+}
 
 #[tracing::instrument(skip(semaphore, upload_files, final_upload_files, _mirror_artifacts))]
 pub async fn fetch(
@@ -31,7 +53,11 @@ pub async fn fetch(
 		"minecraft/v{}/library-patches-sha1.json",
 		interfrost::api::minecraft::CURRENT_FORMAT_VERSION
 	);
-	let patches_hash = sha1_async(bytes::Bytes::from_static(LIBRARY_PATCHES)).await?;
+	// the JVM flag is part of the hash so changing it regenerates every cached version
+	let patches_hash = sha1_async(bytes::Bytes::from(
+		[LIBRARY_PATCHES, DISABLE_BASE64_INTRINSICS.as_bytes()].concat(),
+	))
+	.await?;
 	let patches_unchanged = fetch_json::<String>(&format_url(&patches_hash_path), &semaphore)
 		.await
 		.is_ok_and(|x| x == patches_hash);
@@ -96,6 +122,13 @@ pub async fn fetch(
 						new_libraries.append(&mut libs);
 					}
 					x.libraries = new_libraries;
+				}
+
+				if let Some(java) = &x.java_version {
+					disable_base64_intrinsics(
+						x.arguments.get_or_insert_default(),
+						java.major_version,
+					);
 				}
 
 				x
@@ -230,5 +263,26 @@ mod tests {
 	#[test]
 	fn library_patches_parse() {
 		assert!(!fetch_library_patches().unwrap().is_empty());
+	}
+
+	#[test]
+	fn base64_intrinsics_disabled_only_from_java_17() {
+		let jvm = |major| {
+			let mut args = HashMap::new();
+			disable_base64_intrinsics(&mut args, major);
+			disable_base64_intrinsics(&mut args, major);
+			args.remove(&ArgumentType::Jvm)
+				.unwrap_or_default()
+				.into_iter()
+				.map(|x| match x {
+					Argument::Normal(x) => x,
+					Argument::Ruled { .. } => unreachable!(),
+				})
+				.collect::<Vec<_>>()
+		};
+		assert!(jvm(8).is_empty());
+		assert!(jvm(16).is_empty());
+		assert_eq!(jvm(17), [DISABLE_BASE64_INTRINSICS]);
+		assert_eq!(jvm(25), [DISABLE_BASE64_INTRINSICS]);
 	}
 }

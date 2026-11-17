@@ -1,3 +1,4 @@
+use crate::api::minecraft::{DISABLE_BASE64_INTRINSICS, disable_base64_intrinsics};
 use crate::utils::prelude::*;
 use interfrost::api::minecraft::{
 	Argument, ArgumentType, ArgumentValue, JavaVersion, Library, Os, OsRule, Rule, RuleAction,
@@ -76,7 +77,14 @@ pub async fn fetch(
 			&semaphore,
 		)
 		.await
-		.is_ok_and(|profile| !starts_on_first_thread(&profile, &Os::OsxArm64)),
+		.is_ok_and(|profile| {
+			!starts_on_first_thread(&profile, &Os::OsxArm64)
+				|| disables_base64_intrinsics(profile.arguments.as_ref())
+					!= disables_base64_intrinsics(Some(&retarget_arguments(
+						None,
+						TEMPLATE_GAME_VERSION,
+					)))
+		}),
 		None => false,
 	};
 
@@ -561,7 +569,19 @@ fn retarget_arguments(
 		});
 	}
 
+	if let Some(java) = java_version(game_version) {
+		disable_base64_intrinsics(&mut arguments, java.major_version);
+	}
+
 	arguments
+}
+
+fn disables_base64_intrinsics(arguments: Option<&HashMap<ArgumentType, Vec<Argument>>>) -> bool {
+	arguments
+		.iter()
+		.filter_map(|arguments| arguments.get(&ArgumentType::Jvm))
+		.flatten()
+		.any(|argument| matches!(argument, Argument::Normal(x) if x == DISABLE_BASE64_INTRINSICS))
 }
 
 fn starts_on_first_thread(profile: &PartialVersionInfo, os: &Os) -> bool {
@@ -727,6 +747,18 @@ mod tests {
 
 		let json = serde_json::to_string(&profile).unwrap();
 		assert!(json.contains(r#""name":"osx-arm64""#));
+	}
+
+	#[test]
+	fn only_java_17_overrides_disable_base64_intrinsics() {
+		base_url();
+		let base = serde_json::from_str::<PartialVersionInfo>(BASE_PROFILE).unwrap();
+		let flagged = |version| {
+			disables_base64_intrinsics(build_profile(&base, &game(version), &[]).arguments.as_ref())
+		};
+
+		assert!(flagged("1.8.9"));
+		assert!(!flagged("1.5.2"));
 	}
 
 	#[test]
