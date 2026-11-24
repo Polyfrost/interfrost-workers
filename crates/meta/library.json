@@ -4518,6 +4518,32 @@
 		]
 	},
 	{
+		"_comment": "Add linux-arm64 support for Mojang's FreeType 2.15.0 build of LWJGL 3.4.3",
+		"match": [
+			"org.lwjgl:lwjgl-freetype:3.4.3-mojang-2.15.0"
+		],
+		"additionalLibraries": [
+			{
+				"downloads": {
+					"artifact": {
+						"sha1": "f2c364fee9db22bb593520872571dd42fea6bc49",
+						"size": 1340997,
+						"url": "https://github.com/Polyfrost/freetype/releases/download/lwjgl-freetype-3.4.3-mojang-2.15.0/lwjgl-freetype-3.4.3-mojang-2.15.0-natives-linux-arm64.jar"
+					}
+				},
+				"name": "org.lwjgl:lwjgl-freetype-natives-linux-arm64:3.4.3-mojang-2.15.0-polyfrost.1",
+				"rules": [
+					{
+						"action": "allow",
+						"os": {
+							"name": "linux-arm64"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
 		"_comment": "Add linux-arm64 support for LWJGL 3.4.3",
 		"match": [
 			"org.lwjgl:lwjgl-shaderc:3.4.3"
